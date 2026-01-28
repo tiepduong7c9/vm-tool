@@ -10,7 +10,7 @@ Auto-scale GNOME monitors and sync system time for VMs.
 ## Installation
 
 ```bash
-curl -sL https://raw.githubusercontent.com/yourusername/t-vm-utils/main/install.sh | bash
+curl -sL https://raw.githubusercontent.com/tiepduong7c9/vm-tool/main/install.sh | bash
 ```
 
 ## Usage
@@ -21,7 +21,7 @@ curl -sL https://raw.githubusercontent.com/yourusername/t-vm-utils/main/install.
 ## Uninstallation
 
 ```bash
-curl -sL https://raw.githubusercontent.com/yourusername/t-vm-utils/main/install.sh | bash -s -- uninstall
+curl -sL https://raw.githubusercontent.com/tiepduong7c9/vm-tool/main/install.sh | bash -s -- uninstall
 ```
 
 ## Requirements

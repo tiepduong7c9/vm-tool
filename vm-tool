@@ -1,0 +1,135 @@
+#!/bin/bash
+
+# Auto-scale GNOME monitors based on resolution
+# > 2500px width => 200%
+# <= 2500px width => 100%
+# Also syncs system time using chrony if drift is detected
+
+echo "[auto-scale] Scanning monitors..."
+
+# Get monitor info using gdctl - list monitors with their resolutions
+# Use a simple parsing approach
+OUTPUT=$(gdctl show --modes)
+
+declare -a MONITORS
+declare -a SCALES
+declare -a LOGICAL_WIDTHS
+
+# Extract all monitor names (lines starting with "Monitor " after tree chars)
+while IFS= read -r line; do
+    if [[ "$line" =~ "Monitor" ]] && [[ "$line" =~ "MetaVendor" ]]; then
+        # Extract monitor name like "Meta-0" or "Meta-1"
+        MON=$(echo "$line" | grep -oP 'Monitor \K[\w-]+(?= \()')
+        if [[ -n "$MON" ]]; then
+            MONITORS+=("$MON")
+        fi
+    fi
+done <<< "$OUTPUT"
+
+# Extract all resolutions (lines with pattern like 3072x1920@60.000)
+while IFS= read -r line; do
+    if [[ "$line" =~ [0-9]+x[0-9]+@ ]]; then
+        WIDTH=$(echo "$line" | grep -oP '[0-9]+(?=x[0-9]+@)')
+        if [[ -n "$WIDTH" ]]; then
+            # Calculate scale
+            if (( WIDTH >= 2500 )); then
+                SCALE=2
+            else
+                SCALE=1
+            fi
+            LOGICAL_WIDTH=$(( WIDTH / SCALE ))
+
+            SCALES+=("$SCALE")
+            LOGICAL_WIDTHS+=("$LOGICAL_WIDTH")
+
+            echo "[auto-scale] Detected resolution: ${WIDTH}px, scale ${SCALE}x"
+        fi
+    fi
+done <<< "$OUTPUT"
+
+MONITOR_COUNT=${#MONITORS[@]}
+echo "[auto-scale] Found $MONITOR_COUNT monitor(s)"
+
+# Build and apply the layout
+if [[ $MONITOR_COUNT -gt 0 ]]; then
+    echo "[auto-scale] Applying layout..."
+
+    POS_X=0
+    FULL_CMD=""
+
+    for ((i=0; i<MONITOR_COUNT; i++)); do
+        MON="${MONITORS[$i]}"
+        SCALE="${SCALES[$i]}"
+        L_WIDTH="${LOGICAL_WIDTHS[$i]}"
+
+        PRIMARY_FLAG=""
+        if [[ $i -eq 0 ]]; then
+            PRIMARY_FLAG="--primary"
+        fi
+
+        FULL_CMD+=" --logical-monitor --x $POS_X --y 0 --scale $SCALE $PRIMARY_FLAG --monitor $MON"
+        POS_X=$(( POS_X + L_WIDTH ))
+
+        echo "[auto-scale]   $MON: x=$POS_X, scale=$SCALE"
+    done
+
+    echo "[auto-scale] Executing: gdctl set $FULL_CMD"
+    gdctl set $FULL_CMD
+    echo "[auto-scale] Layout applied successfully"
+else
+    echo "[auto-scale] No monitors detected."
+fi
+
+# Time sync check using chrony
+echo ""
+echo "[time-sync] Checking system time drift..."
+
+# Get time offset from chrony (in seconds, can be negative or positive)
+TRACKING=$(chronyc tracking 2>/dev/null)
+
+if [[ $? -ne 0 ]]; then
+    echo "[time-sync] Warning: chronyc tracking failed (chronyd may not be running)"
+    exit 0
+fi
+
+# Extract "System time" line - format: "System time : 30544.265625000 seconds slow of NTP time"
+OFFSET_LINE=$(echo "$TRACKING" | grep "System time")
+
+if [[ -z "$OFFSET_LINE" ]]; then
+    echo "[time-sync] Warning: Could not parse chrony output"
+    exit 0
+fi
+
+# Extract the offset value (handles various spacing formats)
+# Output: "System time     : 30494.652343750 seconds slow of NTP time"
+OFFSET=$(echo "$OFFSET_LINE" | awk -F':' '{print $2}' | awk '{print $1}')
+OFFSET_DIR=$(echo "$OFFSET_LINE" | grep -o 'slow\|fast')
+
+# Remove decimal part for integer comparison
+OFFSET_ABS=${OFFSET%.*}
+OFFSET_ABS=${OFFSET_ABS:-0}
+
+echo "[time-sync] Current offset: ${OFFSET}s $OFFSET_DIR of NTP time"
+
+# Threshold: 30 seconds difference
+THRESHOLD=30
+
+if (( OFFSET_ABS > THRESHOLD )); then
+    echo "[time-sync] Time drift exceeds threshold (${THRESHOLD}s), forcing chrony update..."
+
+    # Force chrony to step the clock immediately
+    # Try passwordless sudo first (from installer setup)
+    if sudo -n chronyc makestep 2>/dev/null; then
+        sleep 1
+        # Check new status
+        NEW_LINE=$(sudo -n chronyc tracking 2>/dev/null | grep "System time")
+        NEW_OFFSET=$(echo "$NEW_LINE" | awk -F':' '{print $2}' | awk '{print $1}')
+        NEW_DIR=$(echo "$NEW_LINE" | grep -o 'slow\|fast')
+        echo "[time-sync] Time sync completed. New offset: ${NEW_OFFSET}s $NEW_DIR"
+    else
+        echo "[time-sync] Warning: chronyc makestep failed (needs sudo password or setup)"
+        echo "[time-sync] Run installer to setup passwordless sudo: ./install.sh"
+    fi
+else
+    echo "[time-sync] System time is within acceptable range"
+fi

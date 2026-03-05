@@ -3,7 +3,7 @@
 # Auto-scale GNOME monitors based on resolution
 # > 2500px width => 200%
 # <= 2500px width => 100%
-# Also syncs system time using chrony if drift is detected
+# Also syncs system time by restarting chrony
 
 echo "[auto-scale] Scanning monitors..."
 
@@ -80,56 +80,13 @@ else
     echo "[auto-scale] No monitors detected."
 fi
 
-# Time sync check using chrony
+# Time sync - restart chrony to force immediate time sync
 echo ""
-echo "[time-sync] Checking system time drift..."
+echo "[time-sync] Restarting chrony..."
 
-# Get time offset from chrony (in seconds, can be negative or positive)
-TRACKING=$(chronyc tracking 2>/dev/null)
-
-if [[ $? -ne 0 ]]; then
-    echo "[time-sync] Warning: chronyc tracking failed (chronyd may not be running)"
-    exit 0
-fi
-
-# Extract "System time" line - format: "System time : 30544.265625000 seconds slow of NTP time"
-OFFSET_LINE=$(echo "$TRACKING" | grep "System time")
-
-if [[ -z "$OFFSET_LINE" ]]; then
-    echo "[time-sync] Warning: Could not parse chrony output"
-    exit 0
-fi
-
-# Extract the offset value (handles various spacing formats)
-# Output: "System time     : 30494.652343750 seconds slow of NTP time"
-OFFSET=$(echo "$OFFSET_LINE" | awk -F':' '{print $2}' | awk '{print $1}')
-OFFSET_DIR=$(echo "$OFFSET_LINE" | grep -o 'slow\|fast')
-
-# Remove decimal part for integer comparison
-OFFSET_ABS=${OFFSET%.*}
-OFFSET_ABS=${OFFSET_ABS:-0}
-
-echo "[time-sync] Current offset: ${OFFSET}s $OFFSET_DIR of NTP time"
-
-# Threshold: 30 seconds difference
-THRESHOLD=30
-
-if (( OFFSET_ABS > THRESHOLD )); then
-    echo "[time-sync] Time drift exceeds threshold (${THRESHOLD}s), forcing chrony update..."
-
-    # Force chrony to step the clock immediately
-    # Try passwordless sudo first (from installer setup)
-    if sudo -n chronyc makestep 2>/dev/null; then
-        sleep 1
-        # Check new status
-        NEW_LINE=$(sudo -n chronyc tracking 2>/dev/null | grep "System time")
-        NEW_OFFSET=$(echo "$NEW_LINE" | awk -F':' '{print $2}' | awk '{print $1}')
-        NEW_DIR=$(echo "$NEW_LINE" | grep -o 'slow\|fast')
-        echo "[time-sync] Time sync completed. New offset: ${NEW_OFFSET}s $NEW_DIR"
-    else
-        echo "[time-sync] Warning: chronyc makestep failed (needs sudo password or setup)"
-        echo "[time-sync] Run installer to setup passwordless sudo: ./install.sh"
-    fi
+if sudo -n systemctl restart chrony 2>/dev/null; then
+    echo "[time-sync] Time sync completed"
 else
-    echo "[time-sync] System time is within acceptable range"
+    echo "[time-sync] Warning: systemctl restart chrony failed (needs sudo password or setup)"
+    echo "[time-sync] Run installer to setup passwordless sudo: ./install.sh"
 fi

@@ -68,7 +68,7 @@ cat > "$INSTALL_DIR/$SCRIPT_NAME" << 'SCRIPT_EOF'
 # Auto-scale GNOME monitors based on resolution
 # > 2500px width => 200%
 # <= 2500px width => 100%
-# Also syncs system time using chrony if drift is detected
+# Also syncs system time by restarting chrony
 
 echo "[auto-scale] Scanning monitors..."
 
@@ -132,45 +132,13 @@ else
 fi
 
 echo ""
-echo "[time-sync] Checking system time drift..."
+echo "[time-sync] Restarting chrony..."
 
-TRACKING=$(sudo -n chronyc tracking 2>/dev/null) || TRACKING=""
-
-if [[ -z "$TRACKING" ]]; then
-    echo "[time-sync] Warning: chronyc tracking failed (setup passwordless sudo first)"
-    exit 0
-fi
-
-OFFSET_LINE=$(echo "$TRACKING" | grep "System time")
-
-if [[ -z "$OFFSET_LINE" ]]; then
-    echo "[time-sync] Warning: Could not parse chrony output"
-    exit 0
-fi
-
-OFFSET=$(echo "$OFFSET_LINE" | awk -F':' '{print $2}' | awk '{print $1}')
-OFFSET_DIR=$(echo "$OFFSET_LINE" | grep -o 'slow\|fast')
-OFFSET_ABS=${OFFSET%.*}
-OFFSET_ABS=${OFFSET_ABS:-0}
-
-echo "[time-sync] Current offset: ${OFFSET}s $OFFSET_DIR of NTP time"
-
-THRESHOLD=30
-
-if (( OFFSET_ABS > THRESHOLD )); then
-    echo "[time-sync] Time drift exceeds threshold (${THRESHOLD}s), forcing chrony update..."
-
-    if sudo -n chronyc makestep 2>/dev/null; then
-        sleep 1
-        NEW_LINE=$(sudo -n chronyc tracking 2>/dev/null | grep "System time")
-        NEW_OFFSET=$(echo "$NEW_LINE" | awk -F':' '{print $2}' | awk '{print $1}')
-        NEW_DIR=$(echo "$NEW_LINE" | grep -o 'slow\|fast')
-        echo "[time-sync] Time sync completed. New offset: ${NEW_OFFSET}s $NEW_DIR"
-    else
-        echo "[time-sync] Warning: chronyc makestep failed (needs sudo setup)"
-    fi
+if sudo -n systemctl restart chrony 2>/dev/null; then
+    echo "[time-sync] Time sync completed"
 else
-    echo "[time-sync] System time is within acceptable range"
+    echo "[time-sync] Warning: systemctl restart chrony failed (needs sudo password or setup)"
+    echo "[time-sync] Run installer to setup passwordless sudo: ./install.sh"
 fi
 SCRIPT_EOF
 
@@ -215,7 +183,7 @@ if [[ -f "$SUDOERS_FILE" ]]; then
 fi
 
 TEMP_SUDOERS=$(mktemp)
-echo "$CURRENT_USER ALL=(ALL) NOPASSWD: /usr/bin/chronyc makestep, /usr/bin/chronyc tracking" > "$TEMP_SUDOERS"
+echo "$CURRENT_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart chrony" > "$TEMP_SUDOERS"
 
 if sudo visudo -c -f "$TEMP_SUDOERS" >/dev/null 2>&1; then
     sudo install -m 0440 "$TEMP_SUDOERS" "$SUDOERS_FILE"

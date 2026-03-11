@@ -8,24 +8,22 @@ VM Tool is a bash-based utility for virtual machines running GNOME. It automatic
 
 ## Architecture
 
-The project consists of three bash scripts:
+The project consists of a single installer script:
 
-1. **install.sh** - The main installer. Unusually, it embeds the entire vm-tool script content via heredoc (lines 65-175). This means changes to vm-tool must be reflected in both the standalone `vm-tool` file AND the heredoc section of `install.sh`.
-2. **vm-tool** - Standalone version of the main script (for development/testing)
-3. **uninstall.sh** - Standalone uninstaller (also embedded in install.sh)
+**install.sh** - The installer that embeds the entire vm-tool script content via heredoc (lines 65-175). To modify vm-tool behavior, edit the heredoc section in install.sh.
 
 ### VM Tool Components
 
-The vm-tool script performs two independent functions:
+The vm-tool script (embedded in install.sh heredoc) performs two independent functions:
 
-1. **Monitor Auto-scaling** (`vm-tool:10-81`)
+1. **Monitor Auto-scaling** (lines 75-132 in heredoc)
    - Parses `gdctl show --modes` output to detect monitors and resolutions
    - Monitors >= 2500px width get 2x scale, others get 1x scale
    - Arranges monitors horizontally using `gdctl set`
 
-2. **Time Sync** (`vm-tool:83-135`)
-   - Checks `chronyc tracking` for system time drift
-   - If drift exceeds 30 seconds, runs `chronyc makestep` via sudo
+2. **Time Sync** (lines 134-158 in heredoc)
+   - Detects available time sync service (chrony/chronyd/systemd-timesyncd)
+   - Restarts the detected service to force immediate time sync
    - Requires passwordless sudo configuration (handled by installer)
 
 ### Installer Details
@@ -34,28 +32,24 @@ The installer creates:
 - `~/.local/bin/vm-tool` - Main script (embedded heredoc)
 - `~/.local/bin/vm-tool-wrapper` - Wrapper that sets DISPLAY/XAUTHORITY environment variables
 - `~/.local/share/applications/vm-tool.desktop` - GNOME desktop entry
-- `/etc/sudoers.d/vm-tool-chrony` - Passwordless sudo for chronyc commands
+- `/etc/sudoers.d/vm-tool-timesync` - Passwordless sudo for time sync service restart
 
 The wrapper script is necessary because gdctl requires DISPLAY and XAUTHORITY to be set when launched from the GNOME application menu.
 
 ## Development
 
-When modifying vm-tool behavior, update both:
-- The `vm-tool` file (for testing)
-- The heredoc section in `install.sh` (lines 65-175, the `SCRIPT_EOF` section)
+When modifying vm-tool behavior, edit the heredoc section in `install.sh` (the section between `cat > "$INSTALL_DIR/$SCRIPT_NAME" << 'SCRIPT_EOF'` and `SCRIPT_EOF`).
 
-Test changes locally by running `./vm-tool` directly.
-
-To test the full installer flow, use a temporary directory or the uninstall option:
+To test changes after modifying the heredoc:
 ```bash
 ./install.sh uninstall
 ./install.sh
+~/.local/bin/vm-tool
 ```
 
 ## Dependencies
 
 - `gdctl` - GNOME display configuration tool (for monitor scaling)
-- `chrony` - NTP implementation (for time sync)
-- `chronyc` - Command-line interface to chronyd
+- Time sync service: `chrony`, `chronyd`, or `systemd-timesyncd`
 - GNOME desktop environment
 - Ubuntu 25.10 or similar

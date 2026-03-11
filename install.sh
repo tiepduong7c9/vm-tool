@@ -9,7 +9,7 @@ SCRIPT_NAME="vm-tool"
 WRAPPER_NAME="vm-tool-wrapper"
 INSTALL_DIR="$HOME/.local/bin"
 DESKTOP_DIR="$HOME/.local/share/applications"
-SUDOERS_FILE="/etc/sudoers.d/vm-tool-chrony"
+SUDOERS_FILE="/etc/sudoers.d/vm-tool-timesync"
 CURRENT_USER=$(whoami)
 
 # Colors for output
@@ -132,12 +132,28 @@ else
 fi
 
 echo ""
-echo "[time-sync] Restarting chrony..."
+echo "[time-sync] Detecting time sync service..."
 
-if sudo -n systemctl restart chrony 2>/dev/null; then
+TIME_SERVICE=""
+
+# Check for available time sync services (in order of preference)
+if systemctl is-enabled --quiet chrony 2>/dev/null; then
+    TIME_SERVICE="chrony"
+elif systemctl is-enabled --quiet chronyd 2>/dev/null; then
+    TIME_SERVICE="chronyd"
+elif systemctl is-enabled --quiet systemd-timesyncd 2>/dev/null; then
+    TIME_SERVICE="systemd-timesyncd"
+else
+    echo "[time-sync] No supported time sync service found (chrony/chronyd/systemd-timesyncd)"
+    exit 0
+fi
+
+echo "[time-sync] Restarting $TIME_SERVICE..."
+
+if sudo -n systemctl restart "$TIME_SERVICE" 2>/dev/null; then
     echo "[time-sync] Time sync completed"
 else
-    echo "[time-sync] Warning: systemctl restart chrony failed (needs sudo password or setup)"
+    echo "[time-sync] Warning: systemctl restart $TIME_SERVICE failed (needs sudo password or setup)"
     echo "[time-sync] Run installer to setup passwordless sudo: ./install.sh"
 fi
 SCRIPT_EOF
@@ -174,24 +190,41 @@ EOF
 
 chmod +x "$DESKTOP_DIR/vm-tool.desktop"
 
-# Setup sudoers
-echo -e "${BLUE}[install] Configuring passwordless chrony access...${NC}"
+# Setup sudoers - detect available time sync service
+echo -e "${BLUE}[install] Detecting time sync service...${NC}"
 
-if [[ -f "$SUDOERS_FILE" ]]; then
-    echo -e "${YELLOW}[install] Removing old sudoers file...${NC}"
-    sudo rm -f "$SUDOERS_FILE"
+TIME_SERVICE=""
+if systemctl is-enabled --quiet chrony 2>/dev/null; then
+    TIME_SERVICE="chrony"
+elif systemctl is-enabled --quiet chronyd 2>/dev/null; then
+    TIME_SERVICE="chronyd"
+elif systemctl is-enabled --quiet systemd-timesyncd 2>/dev/null; then
+    TIME_SERVICE="systemd-timesyncd"
+else
+    echo -e "${YELLOW}[install] No time sync service found (chrony/chronyd/systemd-timesyncd)${NC}"
+    echo -e "${YELLOW}[install] Skipping sudoers configuration${NC}"
+    TIME_SERVICE=""
 fi
 
-TEMP_SUDOERS=$(mktemp)
-echo "$CURRENT_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart chrony" > "$TEMP_SUDOERS"
+if [[ -n "$TIME_SERVICE" ]]; then
+    echo -e "${BLUE}[install] Configuring passwordless sudo for $TIME_SERVICE...${NC}"
 
-if sudo visudo -c -f "$TEMP_SUDOERS" >/dev/null 2>&1; then
-    sudo install -m 0440 "$TEMP_SUDOERS" "$SUDOERS_FILE"
-    rm -f "$TEMP_SUDOERS"
-    echo -e "${GREEN}[install] Sudoers entry installed successfully${NC}"
-else
-    rm -f "$TEMP_SUDOERS"
-    echo -e "${RED}[install] Failed to validate sudoers entry${NC}"
+    if [[ -f "$SUDOERS_FILE" ]]; then
+        echo -e "${YELLOW}[install] Removing old sudoers file...${NC}"
+        sudo rm -f "$SUDOERS_FILE"
+    fi
+
+    TEMP_SUDOERS=$(mktemp)
+    echo "$CURRENT_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart $TIME_SERVICE" > "$TEMP_SUDOERS"
+
+    if sudo visudo -c -f "$TEMP_SUDOERS" >/dev/null 2>&1; then
+        sudo install -m 0440 "$TEMP_SUDOERS" "$SUDOERS_FILE"
+        rm -f "$TEMP_SUDOERS"
+        echo -e "${GREEN}[install] Sudoers entry installed for $TIME_SERVICE${NC}"
+    else
+        rm -f "$TEMP_SUDOERS"
+        echo -e "${RED}[install] Failed to validate sudoers entry${NC}"
+    fi
 fi
 
 update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
@@ -203,4 +236,4 @@ echo "  - Super/Activities menu"
 echo "  - Terminal: vm-tool"
 echo ""
 echo "To uninstall:"
-echo "  curl -sL https://raw.githubusercontent.com/yourusername/t-vm-utils/main/install.sh | bash -s -- uninstall"
+echo "  curl -sL https://raw.githubusercontent.com/tiepduong7c9/vm-tool/main/install.sh | bash -s -- uninstall"
